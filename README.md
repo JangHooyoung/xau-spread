@@ -1,0 +1,1 @@
+정적 페이지는 `index.html` 하나만 있으면 됩니다. GitHub Pages에 이 파일을 올리세요. 브라우저가 RISEx 호가 GET과 TXFlow `POST /info`를 직접 호출합니다. RISEx REST는 github.io Origin을 허용하지 않아서, 막히면 공식 웹소켓 `wss://ws.rise.trade/ws`로 같은 XAU 호가를 받습니다. 상세 CORS 결과는 상위 README를 보세요. 저장소 생성이나 푸시는 이 폴더만으로는 하지 않습니다.

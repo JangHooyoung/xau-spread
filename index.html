@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>XAU 스프레드 · RISEx vs TXFlow</title>
+  <style>
+    :root {
+      --bg: #07090c;
+      --panel: #10141a;
+      --panel2: #161c24;
+      --line: #232b36;
+      --text: #d5dde6;
+      --muted: #7a8694;
+      --dim: #4d5966;
+      --cyan: #3ee0c2;
+      --green: #5ee0a0;
+      --pink: #ff6b9a;
+      --gold: #f0c14b;
+      --red: #ff5d5d;
+      --wait: #8b95a3;
+      --shade: rgba(62, 224, 194, 0.10);
+      --shade2: rgba(62, 224, 194, 0.22);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 13px/1.45 ui-monospace, "SF Mono", "Cascadia Code", "D2Coding", "Noto Sans Mono CJK KR", Menlo, Consolas, monospace;
+    }
+    body { min-height: 100vh; padding: 18px 22px 24px; }
+    .wrap { max-width: 1080px; margin: 0 auto; }
+    header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 12px;
+    }
+    .title { font-size: 15px; letter-spacing: 0.08em; text-transform: uppercase; }
+    .title span { color: var(--muted); margin-left: 10px; font-size: 12px; letter-spacing: 0.04em; }
+    .live { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--dim);
+      box-shadow: 0 0 0 0 rgba(62, 224, 194, 0.6);
+    }
+    .dot.on {
+      background: var(--cyan);
+      animation: pulse 1.6s ease-out infinite;
+    }
+    .dot.err { background: var(--red); animation: none; }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(62, 224, 194, 0.55); }
+      70% { box-shadow: 0 0 0 8px rgba(62, 224, 194, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(62, 224, 194, 0); }
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1.4fr 0.9fr;
+      gap: 12px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      padding: 16px 18px 14px;
+    }
+    .spread-box { display: flex; flex-direction: column; justify-content: center; min-height: 196px; }
+    .spread-label { color: var(--muted); letter-spacing: 0.12em; font-size: 11px; text-transform: uppercase; }
+    .spread-num {
+      font-size: 72px;
+      font-weight: 600;
+      letter-spacing: -0.04em;
+      line-height: 1.05;
+      margin: 8px 0 4px;
+      font-variant-numeric: tabular-nums;
+    }
+    .spread-num.tight { color: var(--cyan); }
+    .spread-num.hold { color: var(--gold); }
+    .spread-num.exit { color: var(--red); }
+    .spread-num.wait { color: var(--text); }
+    .spread-sub { color: var(--muted); }
+    .prices {
+      display: flex;
+      gap: 28px;
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+    }
+    .px .k { color: var(--muted); font-size: 11px; letter-spacing: 0.08em; }
+    .px .v { font-size: 22px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+    .px .s { color: var(--dim); font-size: 11px; margin-top: 2px; }
+    .rise .v { color: var(--green); }
+    .tx .v { color: var(--pink); }
+    .state-box { display: flex; flex-direction: column; gap: 10px; }
+    .state-tag {
+      align-self: flex-start;
+      padding: 4px 10px;
+      letter-spacing: 0.16em;
+      font-size: 18px;
+      font-weight: 700;
+      border: 1px solid var(--line);
+      background: var(--panel2);
+    }
+    .state-tag.WAIT { color: var(--wait); }
+    .state-tag.ENTER { color: var(--cyan); border-color: var(--cyan); }
+    .state-tag.HOLD { color: var(--gold); border-color: var(--gold); }
+    .state-tag.EXIT { color: var(--red); border-color: var(--red); }
+    .kv { display: grid; grid-template-columns: 7.5em 1fr; gap: 4px 10px; font-variant-numeric: tabular-nums; }
+    .kv .k { color: var(--muted); }
+    .gauge-wrap { margin-top: 12px; padding: 14px 18px 16px; }
+    .gauge-labels {
+      display: flex; justify-content: space-between; margin-bottom: 8px;
+      font-size: 11px; letter-spacing: 0.08em;
+    }
+    .gauge-labels .l { color: var(--green); }
+    .gauge-labels .r { color: var(--pink); }
+    .gauge {
+      position: relative;
+      height: 28px;
+      background: var(--panel2);
+      border: 1px solid var(--line);
+      overflow: hidden;
+    }
+    .zone {
+      position: absolute; top: 0; bottom: 0;
+      background: var(--shade);
+      border-left: 1px solid var(--shade2);
+      border-right: 1px solid var(--shade2);
+    }
+    .zero {
+      position: absolute; top: 0; bottom: 0; width: 1px;
+      background: #3a4552;
+    }
+    .tick {
+      position: absolute; top: 0; width: 1px; height: 6px;
+      background: #3a4552;
+    }
+    .tick.bot { top: auto; bottom: 0; }
+    .mark {
+      position: absolute; top: -3px; bottom: -3px; width: 2px;
+      background: var(--text);
+      transform: translateX(-1px);
+    }
+    .mark.now { background: var(--cyan); width: 3px; z-index: 3; }
+    .mark.entry { background: var(--gold); z-index: 2; }
+    .mark.exitm { background: var(--red); opacity: 0.85; }
+    .gauge-scale {
+      position: relative; height: 16px; margin-top: 4px; color: var(--dim); font-size: 10px;
+    }
+    .gauge-scale span { position: absolute; transform: translateX(-50%); }
+    .chart-wrap { margin-top: 12px; padding: 12px 18px 10px; }
+    .chart-head {
+      display: flex; justify-content: space-between; align-items: baseline;
+      margin-bottom: 8px; color: var(--muted); font-size: 11px; letter-spacing: 0.08em;
+    }
+    canvas { width: 100%; height: 220px; display: block; }
+    .controls {
+      display: flex; flex-wrap: wrap; gap: 16px; align-items: end;
+      margin-top: 12px; padding: 12px 18px; border: 1px solid var(--line); background: var(--panel);
+    }
+    label { color: var(--muted); font-size: 11px; letter-spacing: 0.06em; display: block; margin-bottom: 4px; }
+    input[type="number"] {
+      width: 88px; background: var(--panel2); color: var(--text);
+      border: 1px solid var(--line); padding: 6px 8px; font: inherit;
+    }
+    input[type="number"]:focus { outline: 1px solid var(--cyan); }
+    button {
+      background: transparent; color: var(--text); border: 1px solid var(--line);
+      padding: 7px 14px; font: inherit; cursor: pointer; letter-spacing: 0.08em;
+    }
+    button:hover { border-color: var(--cyan); color: var(--cyan); }
+    .hint { margin-top: 10px; color: var(--dim); font-size: 11px; }
+    .err { color: var(--red); margin-top: 8px; min-height: 1em; }
+    @media (max-width: 800px) {
+      .grid { grid-template-columns: 1fr; }
+      .spread-num { font-size: 56px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="title">XAU 스프레드 <span>RISEx − TXFlow</span></div>
+      <div class="live"><i id="dot" class="dot"></i><span id="clock">—</span></div>
+    </header>
+
+    <div class="grid">
+      <div class="panel spread-box">
+        <div class="spread-label">현재 스프레드 (USD)</div>
+        <div id="spreadNum" class="spread-num wait">—</div>
+        <div class="spread-sub" id="spreadSub">절댓값 기준 진입 · 부호는 어느 쪽이 높은지 표시</div>
+        <div class="prices">
+          <div class="px rise">
+            <div class="k">RISE XAU</div>
+            <div class="v" id="risePx">—</div>
+            <div class="s" id="riseSrc"></div>
+          </div>
+          <div class="px tx">
+            <div class="k">TXFlow XAU</div>
+            <div class="v" id="txPx">—</div>
+            <div class="s" id="txSrc"></div>
+          </div>
+        </div>
+      </div>
+      <div class="panel state-box">
+        <div id="stateTag" class="state-tag WAIT">WAIT</div>
+        <div class="kv">
+          <div class="k">상태</div><div id="stateKo">대기</div>
+          <div class="k">진입 스프레드</div><div id="entryVal">—</div>
+          <div class="k">청산 목표</div><div id="exitVal">—</div>
+          <div class="k">현재 / 차이</div><div id="nowVal">—</div>
+          <div class="k">진입 시각</div><div id="entryTime">—</div>
+        </div>
+        <div class="err" id="err"></div>
+      </div>
+    </div>
+
+    <div class="panel gauge-wrap">
+      <div class="gauge-labels">
+        <span class="l">LONG RISE</span>
+        <span class="r">LONG TX</span>
+      </div>
+      <div class="gauge" id="gauge"></div>
+      <div class="gauge-scale" id="gaugeScale"></div>
+    </div>
+
+    <div class="panel chart-wrap">
+      <div class="chart-head">
+        <span>최근 2시간 스프레드</span>
+        <span>음영: 진입 구간 (절댓값 임계 이하)</span>
+      </div>
+      <canvas id="chart" width="1040" height="220"></canvas>
+    </div>
+
+    <div class="controls">
+      <div>
+        <label for="enterTh">진입 임계 (이하)</label>
+        <input id="enterTh" type="number" min="0.1" max="100" step="0.1" />
+      </div>
+      <div>
+        <label for="exitTh">청산 임계 (차이 이상)</label>
+        <input id="exitTh" type="number" min="0.1" max="100" step="0.1" />
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button type="button" id="resetBtn">진입 리셋</button>
+      </div>
+    </div>
+    <div class="hint">
+      스프레드 = RISE 중간가 − TXFlow 중간가 (USD). 중간가 = (최우선 매수 + 최우선 매도) / 2, 호가가 없으면 마크가.
+      진입은 절댓값, 청산은 부호 있는 스프레드가 진입 시점 대비 6 이상 벌어졌을 때.
+      진입 정보는 이 브라우저에만 저장됩니다. 주문은 내지 않습니다.
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    const LS_ENTRY = "xau-spread-entry";
+    const LS_TH = "xau-spread-thresholds";
+    const LS_HIST = "xau-spread-history";
+    const POLL_MS = 1500;
+    const HIST_MS = 2 * 60 * 60 * 1000;
+    const TZ = "Asia/Seoul";
+    const KO = { WAIT: "대기", ENTER: "진입", HOLD: "보유", EXIT: "청산" };
+
+    const $ = (id) => document.getElementById(id);
+    const enterInput = $("enterTh");
+    const exitInput = $("exitTh");
+    const canvas = $("chart");
+    const ctx = canvas.getContext("2d");
+
+    let thresholds = loadThresholds();
+    let entry = loadEntry();
+    let history = loadHistory();
+    let last = null;
+    let state = "WAIT";
+
+    enterInput.value = String(thresholds.enter);
+    exitInput.value = String(thresholds.exit);
+
+    function loadThresholds() {
+      try {
+        const raw = JSON.parse(localStorage.getItem(LS_TH) || "null");
+        const enter = Number(raw && raw.enter);
+        const exit = Number(raw && raw.exit);
+        return {
+          enter: enter > 0 ? enter : 4,
+          exit: exit > 0 ? exit : 6,
+        };
+      } catch {
+        return { enter: 4, exit: 6 };
+      }
+    }
+    function saveThresholds() {
+      localStorage.setItem(LS_TH, JSON.stringify(thresholds));
+    }
+    function loadEntry() {
+      try {
+        const raw = JSON.parse(localStorage.getItem(LS_ENTRY) || "null");
+        if (!raw || typeof raw.signed !== "number" || typeof raw.t !== "number") return null;
+        return raw;
+      } catch {
+        return null;
+      }
+    }
+    function saveEntry() {
+      if (entry) localStorage.setItem(LS_ENTRY, JSON.stringify(entry));
+      else localStorage.removeItem(LS_ENTRY);
+    }
+    function loadHistory() {
+      try {
+        const raw = JSON.parse(localStorage.getItem(LS_HIST) || "[]");
+        const cut = Date.now() - HIST_MS;
+        return Array.isArray(raw) ? raw.filter((p) => p && p.t >= cut && typeof p.signed === "number") : [];
+      } catch {
+        return [];
+      }
+    }
+    function saveHistory() {
+      const cut = Date.now() - HIST_MS;
+      history = history.filter((p) => p.t >= cut);
+      if (history.length > 4800) history = history.slice(-4800);
+      let json = JSON.stringify(history);
+      while (json.length > 400000 && history.length > 400) {
+        history = history.slice(-Math.floor(history.length * 0.75));
+        json = JSON.stringify(history);
+      }
+      localStorage.setItem(LS_HIST, json);
+    }
+
+    function fmtTime(ms) {
+      if (!ms) return "—";
+      const p = new Intl.DateTimeFormat("en-CA", {
+        timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+      }).formatToParts(new Date(ms));
+      const g = Object.fromEntries(p.filter(x => x.type !== "literal").map(x => [x.type, x.value]));
+      return g.year + "-" + g.month + "-" + g.day + " " + g.hour + ":" + g.minute + ":" + g.second + " KST";
+    }
+    function fmtClock(ms) {
+      return new Intl.DateTimeFormat("ko-KR", {
+        timeZone: TZ, hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+      }).format(new Date(ms)) + " KST";
+    }
+    function fmtN(n, d = 2) {
+      if (typeof n !== "number" || Number.isNaN(n)) return "—";
+      const sign = n > 0 ? "+" : "";
+      return sign + n.toFixed(d);
+    }
+    function fmtPx(n) {
+      if (typeof n !== "number" || Number.isNaN(n)) return "—";
+      return n.toFixed(2);
+    }
+    function srcLabel(q) {
+      if (!q) return "";
+      const bits = [];
+      if (q.source === "mid") bits.push("중간가");
+      if (q.source === "mid-ws") bits.push("중간가 · 웹소켓");
+      if (q.source === "mark") bits.push("마크가 폴백");
+      if (q.bid != null && q.ask != null) bits.push("매수 " + fmtPx(q.bid) + " / 매도 " + fmtPx(q.ask));
+      return bits.join(" · ");
+    }
+
+    function computeState(signed) {
+      const abs = Math.abs(signed);
+      if (!entry) return abs <= thresholds.enter ? "ENTER" : "WAIT";
+      if (Math.abs(signed - entry.signed) >= thresholds.exit) return "EXIT";
+      return "HOLD";
+    }
+
+    function applyState(signed, ts) {
+      const next = computeState(signed);
+      if (next === "ENTER" && !entry) {
+        entry = { signed, abs: Math.abs(signed), t: ts };
+        saveEntry();
+      }
+      state = entry ? computeState(signed) : next;
+    }
+
+    function render(data) {
+      const now = data && data.ts ? data.ts : Date.now();
+      $("clock").textContent = fmtClock(now);
+      if (!data || !data.ok) {
+        $("dot").className = "dot err";
+        $("err").textContent = errorText(data);
+        return;
+      }
+      $("dot").className = "dot on";
+      $("err").textContent = "";
+      last = data;
+      const signed = data.spread.signed;
+      const abs = data.spread.abs;
+      applyState(signed, data.ts);
+
+      const num = $("spreadNum");
+      num.textContent = fmtN(signed, 2);
+      num.className = "spread-num " + (state === "EXIT" ? "exit" : state === "HOLD" ? "hold" : state === "ENTER" || abs <= thresholds.enter ? "tight" : "wait");
+      $("spreadSub").textContent = "절댓값 " + abs.toFixed(2) + "  ·  " + (signed >= 0 ? "RISE가 더 높음" : "TXFlow가 더 높음");
+
+      $("risePx").textContent = fmtPx(data.rise.mid);
+      $("txPx").textContent = fmtPx(data.txflow.mid);
+      $("riseSrc").textContent = srcLabel(data.rise);
+      $("txSrc").textContent = srcLabel(data.txflow);
+
+      $("stateTag").className = "state-tag " + state;
+      $("stateTag").textContent = state;
+      $("stateKo").textContent = KO[state];
+      $("entryVal").textContent = entry ? fmtN(entry.signed, 2) : "—";
+      if (entry) {
+        const lo = entry.signed - thresholds.exit;
+        const hi = entry.signed + thresholds.exit;
+        $("exitVal").textContent = fmtN(lo, 2) + "  /  " + fmtN(hi, 2);
+        $("nowVal").textContent = fmtN(signed, 2) + "  /  Δ " + fmtN(signed - entry.signed, 2);
+        $("entryTime").textContent = fmtTime(entry.t);
+      } else {
+        $("exitVal").textContent = "진입 후 |Δ| ≥ " + thresholds.exit.toFixed(1);
+        $("nowVal").textContent = fmtN(signed, 2);
+        $("entryTime").textContent = "—";
+      }
+      drawGauge(signed);
+      drawChart();
+    }
+
+    function errorText(data) {
+      if (!data) return "시세를 불러오지 못했습니다.";
+      const e = data.errors || {};
+      const parts = Object.keys(e).map((k) => k + ": " + e[k]);
+      return parts.length ? parts.join(" · ") : "시세를 불러오지 못했습니다.";
+    }
+
+    function scaleFor(signed) {
+      const ev = entry ? Math.abs(entry.signed) + thresholds.exit : 0;
+      const raw = Math.max(10, thresholds.enter + 2, Math.abs(signed) + 2, ev + 1);
+      return Math.ceil(raw / 2) * 2;
+    }
+
+    function drawGauge(signed) {
+      const scale = scaleFor(signed);
+      const el = $("gauge");
+      const sc = $("gaugeScale");
+      const pct = (v) => ((v + scale) / (2 * scale)) * 100;
+      const enter = thresholds.enter;
+      let html = "";
+      html += '<div class="zone" style="left:' + pct(-enter) + '%;width:' + (pct(enter) - pct(-enter)) + '%"></div>';
+      html += '<div class="zero" style="left:' + pct(0) + '%"></div>';
+      const ticks = [-scale, -enter, 0, enter, scale];
+      if (entry) ticks.push(entry.signed, entry.signed - thresholds.exit, entry.signed + thresholds.exit);
+      ticks.forEach((t) => {
+        if (t < -scale || t > scale) return;
+        html += '<div class="tick" style="left:' + pct(t) + '%"></div>';
+        html += '<div class="tick bot" style="left:' + pct(t) + '%"></div>';
+      });
+      if (entry) {
+        html += '<div class="mark entry" style="left:' + pct(entry.signed) + '%" title="진입"></div>';
+        const lo = entry.signed - thresholds.exit;
+        const hi = entry.signed + thresholds.exit;
+        if (lo >= -scale) html += '<div class="mark exitm" style="left:' + pct(lo) + '%" title="청산"></div>';
+        if (hi <= scale) html += '<div class="mark exitm" style="left:' + pct(hi) + '%" title="청산"></div>';
+      }
+      html += '<div class="mark now" style="left:' + pct(signed) + '%" title="현재"></div>';
+      el.innerHTML = html;
+      const labels = [-scale, -enter, 0, enter, scale];
+      sc.innerHTML = labels.map((v) => '<span style="left:' + pct(v) + '%">' + (v > 0 ? "+" : "") + v + '</span>').join("");
+    }
+
+    function drawChart() {
+      const dpr = window.devicePixelRatio || 1;
+      const cssW = canvas.clientWidth || 1040;
+      const cssH = 220;
+      if (canvas.width !== Math.round(cssW * dpr) || canvas.height !== Math.round(cssH * dpr)) {
+        canvas.width = Math.round(cssW * dpr);
+        canvas.height = Math.round(cssH * dpr);
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const w = cssW, h = cssH;
+      ctx.clearRect(0, 0, w, h);
+      const pad = { l: 48, r: 14, t: 12, b: 24 };
+      const now = Date.now();
+      const t0 = now - HIST_MS;
+      const pts = history.filter((p) => p.t >= t0);
+      const lastSigned = last && last.ok ? last.spread.signed : 0;
+      const yAbs = Math.max(
+        thresholds.enter + 1,
+        2,
+        ...pts.map((p) => Math.abs(p.signed)),
+        Math.abs(lastSigned),
+        entry ? Math.abs(entry.signed) + thresholds.exit : 0
+      );
+      const yMin = -yAbs, yMax = yAbs;
+      const xOf = (t) => pad.l + ((t - t0) / HIST_MS) * (w - pad.l - pad.r);
+      const yOf = (v) => pad.t + (1 - (v - yMin) / (yMax - yMin)) * (h - pad.t - pad.b);
+
+      ctx.fillStyle = "#0b1016";
+      ctx.fillRect(pad.l, pad.t, w - pad.l - pad.r, h - pad.t - pad.b);
+
+      const yEnterTop = yOf(thresholds.enter);
+      const yEnterBot = yOf(-thresholds.enter);
+      ctx.fillStyle = "rgba(62, 224, 194, 0.10)";
+      ctx.fillRect(pad.l, yEnterTop, w - pad.l - pad.r, yEnterBot - yEnterTop);
+
+      ctx.strokeStyle = "#232b36";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      [yMax, thresholds.enter, 0, -thresholds.enter, yMin].forEach((v) => {
+        const y = yOf(v);
+        ctx.moveTo(pad.l, y);
+        ctx.lineTo(w - pad.r, y);
+      });
+      ctx.stroke();
+
+      ctx.fillStyle = "#7a8694";
+      ctx.font = "10px ui-monospace, monospace";
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      [yMax, thresholds.enter, 0, -thresholds.enter, yMin].forEach((v) => {
+        ctx.fillText((v > 0 ? "+" : "") + v.toFixed(v % 1 ? 1 : 0), pad.l - 6, yOf(v));
+      });
+
+      if (entry) {
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = "#f0c14b";
+        ctx.beginPath();
+        ctx.moveTo(pad.l, yOf(entry.signed));
+        ctx.lineTo(w - pad.r, yOf(entry.signed));
+        ctx.stroke();
+        ctx.strokeStyle = "#ff5d5d";
+        [entry.signed - thresholds.exit, entry.signed + thresholds.exit].forEach((v) => {
+          ctx.beginPath();
+          ctx.moveTo(pad.l, yOf(v));
+          ctx.lineTo(w - pad.r, yOf(v));
+          ctx.stroke();
+        });
+        ctx.setLineDash([]);
+      }
+
+      ctx.fillStyle = "#4d5966";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      for (let i = 0; i <= 4; i++) {
+        const t = t0 + (HIST_MS * i) / 4;
+        const label = new Intl.DateTimeFormat("ko-KR", {
+          timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false,
+        }).format(new Date(t));
+        ctx.fillText(label, xOf(t), h - pad.b + 6);
+      }
+
+      if (pts.length >= 1) {
+        ctx.beginPath();
+        pts.forEach((p, i) => {
+          const x = xOf(p.t), y = yOf(p.signed);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.strokeStyle = "#3ee0c2";
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+        const lastPt = pts[pts.length - 1];
+        ctx.beginPath();
+        ctx.fillStyle = "#3ee0c2";
+        ctx.arc(xOf(lastPt.t), yOf(lastPt.signed), 3.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.strokeStyle = "rgba(62,224,194,0.45)";
+        ctx.lineWidth = 2;
+        ctx.arc(xOf(lastPt.t), yOf(lastPt.signed), 7, 0, Math.PI * 2);
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = "#4d5966";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("데이터가 쌓이면 여기에 그려집니다", (w + pad.l - pad.r) / 2, (h - pad.b + pad.t) / 2);
+      }
+    }
+
+    function mergeHistory(points) {
+      const byT = new Map();
+      history.forEach((p) => byT.set(p.t, p));
+      (points || []).forEach((p) => { if (p && typeof p.t === "number") byT.set(p.t, p); });
+      history = Array.from(byT.values()).sort((a, b) => a.t - b.t);
+      saveHistory();
+    }
+
+    const RISE_BOOK = "https://api.rise.trade/v1/orderbook?market_id=17&limit=1";
+    const RISE_MARKETS = "https://api.rise.trade/v1/markets";
+    const RISE_WS = "wss://ws.rise.trade/ws";
+    const TX_INFO = "https://rpc.txflow.com/info";
+    const TX_VERSION = "2026-08-16";
+
+    function num(v) {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    }
+    function midOf(bid, ask) {
+      return bid != null && ask != null ? (bid + ask) / 2 : null;
+    }
+
+    async function fetchRiseRest() {
+      const res = await fetch(RISE_BOOK, { cache: "no-store" });
+      if (!res.ok) throw new Error("RISEx HTTP " + res.status);
+      const body = await res.json();
+      const data = body.data || body;
+      const bids = data.bids || [];
+      const asks = data.asks || [];
+      const bid = bids[0] ? num(bids[0].price) : null;
+      const ask = asks[0] ? num(asks[0].price) : null;
+      let mid = midOf(bid, ask);
+      let mark = null;
+      let source = "mid";
+      if (mid == null) {
+        const mres = await fetch(RISE_MARKETS, { cache: "no-store" });
+        if (!mres.ok) throw new Error("RISEx markets HTTP " + mres.status);
+        const markets = ((await mres.json()).data || {}).markets || [];
+        const row = markets.find((m) => String(m.market_id) === "17");
+        mark = row ? num(row.mark_price) : null;
+        mid = mark;
+        source = "mark";
+        if (mid == null) throw new Error("RISEx XAU 호가/마크가 없음");
+      }
+      return { exchange: "rise", symbol: "XAU/USDC", bid, ask, mid, mark, source };
+    }
+
+    async function fetchTx() {
+      const res = await fetch(TX_INFO, {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", "x-api-version": TX_VERSION },
+        body: JSON.stringify({ type: "l2Book", coin: "51" }),
+      });
+      if (!res.ok) throw new Error("TXFlow HTTP " + res.status);
+      const body = await res.json();
+      if (body && body.success === false) throw new Error(body.message || "TXFlow l2Book 실패");
+      const data = body.data || body;
+      const levels = data.levels || [];
+      const bids = levels[0] || [];
+      const asks = levels[1] || [];
+      const bid = bids[0] ? num(bids[0].px) : null;
+      const ask = asks[0] ? num(asks[0].px) : null;
+      let mid = midOf(bid, ask);
+      let mark = null;
+      let source = "mid";
+      if (mid == null) {
+        const tres = await fetch(TX_INFO, {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json", "x-api-version": TX_VERSION },
+          body: JSON.stringify({ type: "marketTicker", instrumentId: 51 }),
+        });
+        if (!tres.ok) throw new Error("TXFlow ticker HTTP " + tres.status);
+        const tick = await tres.json();
+        mark = num((tick.data || tick).markPx);
+        mid = mark;
+        source = "mark";
+        if (mid == null) throw new Error("TXFlow XAU 호가/마크가 없음");
+      }
+      return { exchange: "txflow", symbol: "XAU-USDC", bid, ask, mid, mark, source };
+    }
+
+    let riseRestBlocked = false;
+    let riseWsQuote = null;
+    let riseWs = null;
+    let riseWsWaiters = [];
+    let riseWsRetry = 0;
+    const riseBids = new Map();
+    const riseAsks = new Map();
+
+    function bestOf(map, max) {
+      if (!map.size) return null;
+      let best = null;
+      map.forEach((qty, px) => {
+        if (!(qty > 0)) return;
+        if (best == null || (max ? px > best : px < best)) best = px;
+      });
+      return best;
+    }
+    function applyRiseLevels(map, levels, snapshot) {
+      if (snapshot) map.clear();
+      (levels || []).forEach((lvl) => {
+        const px = num(lvl.price);
+        const qty = num(lvl.quantity);
+        if (px == null) return;
+        if (qty == null || qty === 0) map.delete(px);
+        else map.set(px, qty);
+      });
+    }
+    function quoteFromRiseBook(source) {
+      const bid = bestOf(riseBids, true);
+      const ask = bestOf(riseAsks, false);
+      const mid = midOf(bid, ask);
+      if (mid == null) return null;
+      return { exchange: "rise", symbol: "XAU/USDC", bid, ask, mid, mark: null, source };
+    }
+    function onRiseWsMessage(raw) {
+      let msg;
+      try { msg = JSON.parse(raw); } catch { return; }
+      if (msg.channel && msg.channel !== "orderbook") return;
+      const data = msg.data || {};
+      const mid = msg.market_id != null ? msg.market_id : data.market_id;
+      if (mid != null && String(mid) !== "17") return;
+      const typ = msg.type || msg.method;
+      if (typ !== "snapshot" && typ !== "update") return;
+      applyRiseLevels(riseBids, data.bids, typ === "snapshot");
+      applyRiseLevels(riseAsks, data.asks, typ === "snapshot");
+      const q = quoteFromRiseBook("mid-ws");
+      if (!q) return;
+      riseWsQuote = q;
+      const waiters = riseWsWaiters.splice(0);
+      waiters.forEach((fn) => fn(q));
+    }
+    function startRiseWs() {
+      if (riseWs && (riseWs.readyState === 0 || riseWs.readyState === 1)) return;
+      try {
+        riseWs = new WebSocket(RISE_WS);
+      } catch (e) {
+        return;
+      }
+      riseWs.addEventListener("open", () => {
+        riseWsRetry = 0;
+        riseWs.send(JSON.stringify({ method: "subscribe", params: { channel: "orderbook", market_ids: [17] } }));
+      });
+      riseWs.addEventListener("message", (ev) => onRiseWsMessage(ev.data));
+      riseWs.addEventListener("close", () => {
+        riseWs = null;
+        const delay = Math.min(15000, 1000 * Math.pow(2, riseWsRetry++));
+        setTimeout(startRiseWs, delay);
+      });
+      riseWs.addEventListener("error", () => {
+        try { riseWs.close(); } catch (_) {}
+      });
+    }
+    function riseFromWs(timeoutMs) {
+      startRiseWs();
+      if (riseWsQuote) return Promise.resolve(riseWsQuote);
+      return new Promise((resolve, reject) => {
+        const t = setTimeout(() => {
+          riseWsWaiters = riseWsWaiters.filter((fn) => fn !== onQ);
+          reject(new Error("RISEx 웹소켓 대기 시간 초과"));
+        }, timeoutMs || 6000);
+        const onQ = (q) => { clearTimeout(t); resolve(q); };
+        riseWsWaiters.push(onQ);
+      });
+    }
+    async function getRise() {
+      if (!riseRestBlocked) {
+        try {
+          return await fetchRiseRest();
+        } catch (e) {
+          riseRestBlocked = true;
+        }
+      }
+      return riseFromWs();
+    }
+
+    async function poll() {
+      const errors = {};
+      let rise = null;
+      let tx = null;
+      const results = await Promise.allSettled([getRise(), fetchTx()]);
+      if (results[0].status === "fulfilled") rise = results[0].value;
+      else errors.rise = String(results[0].reason && results[0].reason.message ? results[0].reason.message : results[0].reason);
+      if (results[1].status === "fulfilled") tx = results[1].value;
+      else errors.txflow = String(results[1].reason && results[1].reason.message ? results[1].reason.message : results[1].reason);
+      const data = { ok: !!(rise && tx), ts: Date.now(), rise, txflow: tx, errors };
+      if (data.ok) {
+        const signed = rise.mid - tx.mid;
+        data.spread = { signed, abs: Math.abs(signed) };
+        mergeHistory([{ t: data.ts, signed, abs: data.spread.abs, rise: rise.mid, tx: tx.mid }]);
+      }
+      render(data);
+    }
+
+    function onThresholdChange() {
+      const enter = Number(enterInput.value);
+      const exit = Number(exitInput.value);
+      if (enter > 0) thresholds.enter = enter;
+      if (exit > 0) thresholds.exit = exit;
+      saveThresholds();
+      if (last && last.ok) render(last);
+      else drawChart();
+    }
+    enterInput.addEventListener("change", onThresholdChange);
+    exitInput.addEventListener("change", onThresholdChange);
+    $("resetBtn").addEventListener("click", () => {
+      entry = null;
+      saveEntry();
+      if (last && last.ok) render(last);
+    });
+    window.addEventListener("resize", () => drawChart());
+
+    drawChart();
+    poll();
+    setInterval(poll, POLL_MS);
+  })();
+  </script>
+</body>
+</html>
