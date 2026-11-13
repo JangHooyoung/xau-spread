@@ -175,6 +175,24 @@
     button:hover { border-color: var(--cyan); color: var(--cyan); }
     .hint { margin-top: 10px; color: var(--dim); font-size: 11px; }
     .err { color: var(--red); margin-top: 8px; min-height: 1em; }
+    .hist-wrap { margin-top: 12px; padding: 12px 18px 12px; }
+    .hist-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+    .hist-head .t { color: var(--muted); font-size: 11px; letter-spacing: 0.08em; }
+    .seg { display: flex; }
+    .seg button { padding: 5px 12px; }
+    .seg button.on { border-color: var(--cyan); color: var(--cyan); }
+    .hist-stats { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; margin-bottom: 6px; }
+    .hist-stats b { color: var(--text); font-weight: 600; }
+    .hchart-box { position: relative; }
+    #hchart { width: 100%; height: 320px; }
+    #htip { position: absolute; z-index: 5; pointer-events: none; display: none; min-width: 200px; background: rgba(16, 20, 26, 0.96); border: 1px solid #3a4552; padding: 9px 11px; font-size: 11.5px; line-height: 1.55; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45); }
+    #htip .d { color: var(--text); font-weight: 700; margin-bottom: 4px; }
+    #htip .h { color: var(--muted); font-size: 10.5px; letter-spacing: 0.05em; margin-top: 6px; border-top: 1px solid var(--line); padding-top: 5px; }
+    #htip .r { display: flex; justify-content: space-between; gap: 14px; font-variant-numeric: tabular-nums; }
+    #htip .r small { color: var(--dim); margin-left: 5px; }
+    #htip .g { color: var(--green); } #htip .p { color: var(--pink); }
+    .legend { display: flex; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: 11px; margin-top: 6px; }
+    .legend i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 5px; }
     @media (max-width: 800px) {
       .grid { grid-template-columns: 1fr; }
       .spread-num { font-size: 56px; }
@@ -234,6 +252,25 @@
         <span>음영: 진입 구간 (절댓값 임계 이하)</span>
       </div>
       <canvas id="chart" width="1040" height="220"></canvas>
+    </div>
+
+    <div class="panel hist-wrap">
+      <div class="hist-head">
+        <span class="t">과거 스프레드 내역 (RISE − TXFlow, USD)</span>
+        <div class="seg" id="hRange">
+          <button type="button" data-r="h1" class="on">7일 · 1시간</button>
+          <button type="button" data-r="m5">3일 · 5분</button>
+        </div>
+      </div>
+      <div class="hist-stats" id="hStats">불러오는 중…</div>
+      <div class="hchart-box"><div id="hchart"></div><div id="htip"></div></div>
+      <div class="legend">
+        <span><i style="background:#8b95a3"></i>과거 (캔들 종가)</span>
+        <span><i style="background:#3ee0c2"></i>최근 실시간 (이 브라우저, 최대 2시간)</span>
+        <span><i style="background:#f0c14b"></i>평균</span>
+        <span><i style="background:rgba(106,168,255,.8)"></i>±1σ · ±2σ</span>
+      </div>
+      <div class="hint" id="hNote">그래프에 마우스를 올리거나 탭하면 그 시각의 가격 차이와 두 거래소 가격이 나와요.</div>
     </div>
 
     <div class="controls">
@@ -793,6 +830,142 @@
     drawChart();
     poll();
     setInterval(poll, POLL_MS);
+  })();
+  </script>
+  <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+  <script>
+  /* 과거 스프레드 내역: history.json(캔들 종가) + 이 브라우저의 최근 실시간 기록 */
+  (() => {
+    const $ = (id) => document.getElementById(id);
+    const KST = 9 * 3600; // lightweight-charts는 UTC로 그리므로 KST로 밀어서 표시
+    const LS_HIST = "xau-spread-history";
+    const LS_RANGE = "xau-spread-hist-range";
+    let range = localStorage.getItem(LS_RANGE) === "m5" ? "m5" : "h1";
+    let hist = null, idx = { h1: new Map(), m5: new Map() }, liveIdx = [];
+    let chart, sHist, sLive, sMean, bands = [];
+
+    const f = (v, d = 2) => (v == null || !isFinite(v) ? "—" : v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }));
+    const susd = (v, d = 2) => (v == null || !isFinite(v) ? "—" : (v > 0 ? "+" : v < 0 ? "−" : "") + "$" + f(Math.abs(v), d));
+    const pct = (v, px) => (px ? (v / px * 100 > 0 ? "+" : "") + (v / px * 100).toFixed(3) + "%" : "");
+    function kst(sec) {
+      const p = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date(sec * 1000));
+      const g = (k) => (p.find((x) => x.type === k) || {}).value;
+      return `${g("year")}-${g("month")}-${g("day")} ${g("hour")}:${g("minute")} KST`;
+    }
+    function statsOf(vals) {
+      const n = vals.length; if (n < 2) return null;
+      const m = vals.reduce((a, b) => a + b, 0) / n;
+      const sd = Math.sqrt(vals.reduce((a, b) => a + (b - m) * (b - m), 0) / (n - 1));
+      return { n, mean: m, std: sd };
+    }
+    function liveRows() {
+      // 1분마다 마지막 샘플 하나: [t_sec, rise, tx]
+      let raw = [];
+      try { raw = JSON.parse(localStorage.getItem(LS_HIST) || "[]"); } catch (_) {}
+      const byMin = new Map();
+      (Array.isArray(raw) ? raw : []).forEach((p) => {
+        if (!p || typeof p.t !== "number" || typeof p.rise !== "number" || typeof p.tx !== "number") return;
+        byMin.set(Math.floor(p.t / 60000) * 60, [Math.floor(p.t / 60000) * 60, p.rise, p.tx]);
+      });
+      return Array.from(byMin.values()).sort((a, b) => a[0] - b[0]);
+    }
+    function liveAt(t) {
+      let best = null;
+      for (const r of liveIdx) if (!best || Math.abs(r[0] - t) < Math.abs(best[0] - t)) best = r;
+      return best && Math.abs(best[0] - t) <= 90 ? best : null;
+    }
+
+    function init() {
+      if (!window.LightweightCharts) { $("hStats").textContent = "차트 라이브러리(CDN) 로드 실패"; return false; }
+      chart = LightweightCharts.createChart($("hchart"), {
+        autoSize: true,
+        layout: { background: { color: "#10141a" }, textColor: "#7a8694", fontFamily: "ui-monospace,Menlo,monospace" },
+        grid: { vertLines: { color: "#161c24" }, horzLines: { color: "#161c24" } },
+        rightPriceScale: { borderColor: "#232b36" },
+        timeScale: { borderColor: "#232b36", timeVisible: true, secondsVisible: false },
+        crosshair: { mode: 0 },
+        localization: { priceFormatter: (v) => susd(v, 2) },
+      });
+      sHist = chart.addLineSeries({ color: "#8b95a3", lineWidth: 1, priceLineVisible: false, lastValueVisible: true });
+      sLive = chart.addLineSeries({ color: "#3ee0c2", lineWidth: 2, priceLineVisible: false });
+      sMean = chart.addLineSeries({ color: "#f0c14b", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+      [[1, 2], [-1, 2], [2, 3], [-2, 3]].forEach(([k, style]) => bands.push({ k, s: chart.addLineSeries({ color: "rgba(106,168,255,.55)", lineWidth: 1, lineStyle: style, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }) }));
+      chart.subscribeCrosshairMove(showTip);
+      chart.subscribeClick(showTip); // 모바일 탭
+      $("hchart").addEventListener("mouseleave", () => ($("htip").style.display = "none"));
+      return true;
+    }
+
+    function showTip(param) {
+      const tip = $("htip");
+      if (!param || param.time == null || !param.point || param.point.x < 0 || param.point.y < 0) { tip.style.display = "none"; return; }
+      const t = param.time - KST;
+      const lr = liveAt(t), hr = idx[range].get(t);
+      const r = lr || hr; if (!r) { tip.style.display = "none"; return; }
+      const rise = r[1], tx = r[2], diff = rise - tx, mpx = (rise + tx) / 2;
+      const src = lr ? "실시간 중간가" : "캔들 종가";
+      const row = (k, v, extra = "", cls = "") => `<div class="r"><span>${k}</span><span class="${cls}">${v}${extra ? `<small>${extra}</small>` : ""}</span></div>`;
+      let html = `<div class="d">${kst(t)}</div>`;
+      html += `<div class="h">가격 차이 (RISE − TXFlow)</div>` + row("차이", `<b>${susd(diff)}</b>`, pct(diff, mpx));
+      const st = hist && hist["stats_" + range];
+      if (st) html += row("평균 대비", susd(diff - st.mean), st.std ? ((diff - st.mean) / st.std).toFixed(2) + "σ" : "");
+      html += `<div class="h">거래 가격 <span style="color:var(--dim)">· ${src}</span></div>` + row("RISEx", f(rise), "", "g") + row("TXFlow", f(tx), "", "p");
+      tip.innerHTML = html; tip.style.display = "block";
+      const box = $("hchart"), W = box.clientWidth, H = box.clientHeight, tw = tip.offsetWidth, th = tip.offsetHeight;
+      let x = param.point.x + 16, y = param.point.y + 16;
+      if (x + tw > W - 60) x = param.point.x - tw - 16; if (x < 4) x = 4;
+      if (y + th > H) y = Math.max(4, H - th - 4);
+      tip.style.left = x + "px"; tip.style.top = y + "px";
+    }
+
+    function draw(fit) {
+      if (!chart || !hist) return;
+      const rows = hist[range] || [];
+      const pts = rows.map(([t, r, x]) => ({ time: t + KST, value: r - x }));
+      sHist.setData(pts);
+      const lastHist = rows.length ? rows[rows.length - 1][0] : 0;
+      liveIdx = liveRows().filter((r) => r[0] > lastHist - 3600);
+      sLive.setData(liveIdx.map(([t, r, x]) => ({ time: t + KST, value: r - x })));
+      const st = hist["stats_" + range] || statsOf(rows.map((r) => r[1] - r[2]));
+      const t0 = pts.length ? pts[0].time : Math.floor(Date.now() / 1000) + KST - 3600;
+      const tEnd = Math.max(t0 + 60, pts.length ? pts[pts.length - 1].time : 0, liveIdx.length ? liveIdx[liveIdx.length - 1][0] + KST : 0);
+      const flat = (v) => [{ time: t0, value: v }, { time: tEnd, value: v }];
+      if (st) { sMean.setData(flat(st.mean)); bands.forEach((b) => b.s.setData(flat(st.mean + b.k * st.std))); }
+      else { sMean.setData([]); bands.forEach((b) => b.s.setData([])); }
+      if (st && rows.length) {
+        const lo = Math.min(...rows.map((r) => r[1] - r[2])), hi = Math.max(...rows.map((r) => r[1] - r[2]));
+        const lastLive = liveIdx[liveIdx.length - 1];
+        const cur = lastLive ? lastLive[1] - lastLive[2] : null;
+        $("hStats").innerHTML = `${range === "h1" ? "7일" : "3일"} 평균 <b>${susd(st.mean)}</b> · 1σ <b>$${f(st.std)}</b> · 최저 <b>${susd(lo)}</b> · 최고 <b>${susd(hi)}</b>` +
+          (cur != null ? ` · 지금 <b>${susd(cur)}</b> (평균 대비 ${st.std ? ((cur - st.mean) / st.std).toFixed(2) : "—"}σ)` : "");
+      }
+      if (fit) chart.timeScale().fitContent();
+    }
+
+    document.querySelectorAll("#hRange button").forEach((b) => {
+      b.classList.toggle("on", b.dataset.r === range);
+      b.addEventListener("click", () => {
+        range = b.dataset.r; localStorage.setItem(LS_RANGE, range);
+        document.querySelectorAll("#hRange button").forEach((x) => x.classList.toggle("on", x === b));
+        $("htip").style.display = "none"; draw(true);
+      });
+    });
+
+    async function load() {
+      if (!init()) return;
+      try {
+        const r = await fetch("history.json", { cache: "no-cache" });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        hist = await r.json();
+        ["h1", "m5"].forEach((k) => (hist[k] || []).forEach((row) => idx[k].set(row[0], row)));
+        $("hNote").textContent = `과거 선은 두 거래소 캔들 종가 차이라 실제 체결가와 조금 다를 수 있어요. 기준 시각 ${kst(hist.generated_at)} 에 만든 history.json이라 그 이후는 청록색 실시간 선(이 브라우저에서 페이지를 켜 둔 동안만, 최대 2시간)으로만 이어져요. 그래프에 마우스를 올리거나 탭하면 그 시각의 가격 차이와 두 거래소 가격이 나와요.`;
+        draw(true);
+        setInterval(() => draw(false), 30000);
+      } catch (e) {
+        $("hStats").textContent = "history.json 로드 실패: " + e.message;
+      }
+    }
+    load();
   })();
   </script>
 </body>
